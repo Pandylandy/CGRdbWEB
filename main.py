@@ -67,13 +67,13 @@ row_io = Div(
                 ], style={"width": "100%"}),
          Label(["Search type: ", dbc.RadioItems(
              id="radio",
-             value='EX',
+             value='find_structure',
              labelClassName="button",
              inline=True,
              options=[
-                {'label': 'Exact ', 'value': 'EX'},
-                 {'label': 'Substructure ', 'value': 'SUB'},
-                 {'label': 'Similarity ', 'value': 'SIM'}
+                {'label': 'Exact ', 'value': 'find_structure'},
+                 {'label': 'Substructure ', 'value': 'find_substructures'},
+                 {'label': 'Similarity ', 'value': 'find_similar'}
              ],
              style={'width': '70%'},
          )], style={"width": "100%"}),
@@ -158,9 +158,8 @@ def predict(n_clicks, structure_mrv, structure_smi, radio):
         try:
             df = prediction(structure, radio)
             if df is None:
-                return dbc.Alert("Not found", color="secondary"), ''
+                return dbc.Alert("No structures found :(", color="secondary"), ''
         except Exception as e:
-            print(e)
             print(format_exc())
             return dbc.Alert('Something went wrong. Please, check the query and try again', color='danger'), ''
 
@@ -211,25 +210,14 @@ def prediction(structure, search_type):
         table = 'Reaction'
 
     db.cgrdb_init_session()
-
-    if search_type == 'SIM':
-        f = getattr(db, table).find_similar(structure)
-        if f:
-            tanimotos = f.tanimotos()
-            f = getattr(f, structures)()
-            print(f)
-    elif search_type == 'EX':
-        f = [getattr(db, table).find_structure(structure)]
-        if f[0]:
+    f = getattr(getattr(db, table), search_type)(structure)
+    if f:
+        if search_type == 'find_structure':
             tanimotos = (1.0,)
+            f = [f]
         else:
-            return None
-    elif search_type == 'SUB':
-        f = getattr(db, table).find_substructures(structure)
-        if f:
             tanimotos = f.tanimotos()
             f = getattr(f, structures)()
-    # with db_session:
     if f is None:
         df = None
     else:
