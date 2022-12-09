@@ -1,6 +1,6 @@
-from dash_html_components import Div, H1, Hr, Button, Label
+from dash.html import Div, H1, H3, Hr, Button, Label
 from dash_marvinjs import DashMarvinJS
-from dash import Dash, dcc, html, Input, Output, State
+from dash import Dash, dcc, Input, Output, State
 from dash import dash_table
 
 from CGRdb import load_schema
@@ -47,10 +47,10 @@ Author: Adeliia Fatykhova adelia@cimm.site
 
 '''
 columns = [
-    {'name': 'ID', 'id': 'ID'},
-    {'name': 'Structure', 'id': 'Structure'},
-    {'name': 'Tanimoto', 'id': 'Tanimoto'},
-    {'name': 'Data', 'id': 'Data'}]
+    {'name': 'ID', 'id': 'ID', 'presentation': 'markdown'},
+    {'name': 'Structure', 'id': 'Structure', 'presentation': 'markdown'},
+    {'name': 'Tanimoto', 'id': 'Tanimoto', 'presentation': 'markdown'},
+    {'name': 'Data', 'id': 'Data', 'presentation': 'markdown'}]
 
 row_desc = Div(
     [Div([dcc.Markdown(desc)], className='col-md-5'),
@@ -81,34 +81,34 @@ row_io = Div(
          ], className='col-md-5'),
         dcc.Loading(
             id="loading",
-            children=[html.Div([html.Div(id="loading-output")])],
+            children=[Div([Div(id="loading-output")])],
             type="dot", style={'font-size': '50px'}
         ),
         Div([
-            html.Div(html.H3("Search results"), style={'textAlign': 'center'}),
-            html.Div(id=f'results')], className='col-md-7')],
+            Div(H3("Search results"), style={'textAlign': 'center'}),
+            Div(id=f'results')], className='col-md-7')],
     className='row col-md-12')
 
-# error_dialog = dcc.ConfirmDialog(
-#     id='confirm-error',
-#     message='Invalid structure. Reaction must be provided'
-# )
+error_dialog = dcc.ConfirmDialog(
+    id='confirm-error',
+    message='Invalid structure. Check the query and try again'
+)
 
 app.title = 'USPTO Search'
 app.layout = Div([H1("USPTO database search", style={'textAlign': 'center'}),
-                  Hr(), row_io, Hr(), row_desc])
+                  error_dialog, Hr(), row_io, Hr(), row_desc])
 
 db = load_schema(DB_NAME, password=PASSWORD, user=USER_NAME, port=PORT, host=HOST, database=DB)
 db.cgrdb_init_session()
 
 
-@app.callback(Output('editor', 'upload'),
+@app.callback([Output('editor', 'upload'), Output('confirm-error', 'displayed')],
               [Input('editor', 'download'), Input('submit-smiles', 'n_clicks')],
               State('smiles', 'value'))
 def standardize(value, s_click, smi):
     s = None
     if s_click is None and not value and not smi:
-        return ''
+        return '', False
     if value:
         with BytesIO(value.encode()) as f, MRVRead(f) as i:
             s = next(i)
@@ -120,7 +120,8 @@ def standardize(value, s_click, smi):
             s.thiele()
             s.clean2d()
         except:
-            return ''
+            print(format_exc())
+            return '', True
         if isinstance(s, ReactionContainer):
             s = RDTool().transform([s]).loc[0, 'reaction']
 
@@ -128,7 +129,7 @@ def standardize(value, s_click, smi):
             with MRVWrite(f) as o:
                 o.write(s)
             value = f.getvalue()
-        return value
+        return value, False
 
 
 @app.callback([Output('results', 'children'), Output('smiles', 'value'), Output("loading-output", "children"),
@@ -138,61 +139,23 @@ def standardize(value, s_click, smi):
 def predict(n_clicks, structure_mrv, structure_smi, radio):
     structure = None
     if not n_clicks:
-        return dash_table.DataTable(
-            columns=columns,
-            markdown_options={"html": True},
-            fill_width=True,
-            style_data={
-                'whiteSpace': 'normal',
-                'height': 'auto',
-            },
-            style_header={
-                'whiteSpace': 'normal',
-                'height': 'auto',
-            }), '', ''
+        return formatted([]), '', ''
 
-    elif structure_mrv:
+    elif structure_mrv and n_clicks:
         with BytesIO(structure_mrv.encode()) as f, MRVRead(f) as i:
             structure = next(i)
     if structure_smi:
         structure = smiles(structure_smi)
     if structure:
         try:
-            df = prediction(structure, radio)
+            df = search(structure, radio)
             if df is None:
                 return dbc.Alert("No structures found :(", color="secondary"), '', ''
         except:
             print(format_exc())
             return dbc.Alert('Something went wrong. Please, check the query and try again', color='danger'), '', ''
 
-        return html.Div(
-            [
-                dash_table.DataTable(
-                    data=df.to_dict('records'),
-                    columns=[
-                        {"id": i, "name": i, "presentation": "markdown"} for i in df.columns
-                    ],
-                    page_current=0,
-                    page_size=10,
-                    page_action='custom',
-                    markdown_options={"html": True},
-                    fill_width=True,
-                    style_cell_conditional=[
-                        {'if': {'column_id': 'confidence', },
-                         'display': 'None', },
-                    ],
-                    style_data={
-                        'whiteSpace': 'normal',
-                        'height': 'auto',
-                    },
-                    style_header={
-                        'whiteSpace': 'normal',
-                        'height': 'auto',
-                    },
-                )
-            ],
-        ), '', ''
-
+        return formatted(df), '', ''
 
 
 def structure_to_html(structure):
@@ -204,10 +167,8 @@ def structure_to_html(structure):
 
 
 @db_session
-def prediction(structure, search_type):
+def search(structure, search_type):
     structures, table = 'molecules', 'Molecule'
-    f = None
-
     if isinstance(structure, ReactionContainer):
         structures = 'reactions'
         table = 'Reaction'
@@ -238,6 +199,29 @@ def prediction(structure, search_type):
             'Data': ';\n'.join(str(y) for x in data for y in x)
         })
     return df
+
+
+def formatted(data):
+    style = {'columns': columns,
+             'markdown_options': {"html": True},
+             'fill_width': True,
+             'style_data': {
+                 'whiteSpace': 'normal',
+                 'height': 'auto',
+             },
+             'style_header': {
+                 'whiteSpace': 'normal',
+                 'height': 'auto',
+             }}
+    if len(data):
+        return dash_table.DataTable(**style,
+                                    data=data.to_dict('records'),
+                                    page_current=0,
+                                    page_size=10,
+                                    page_action='custom'
+                                    )
+    else:
+        return dash_table.DataTable(**style)
 
 
 if __name__ == '__main__':
