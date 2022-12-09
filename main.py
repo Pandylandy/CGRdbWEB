@@ -3,7 +3,6 @@ from dash_marvinjs import DashMarvinJS
 from dash import Dash, dcc, html, Input, Output, State
 from dash import dash_table
 
-
 from CGRdb import load_schema
 from CGRtools.containers import ReactionContainer
 from CGRtools.files import MRVWrite, MRVRead
@@ -25,7 +24,7 @@ external_stylesheets = [{'href': 'https://stackpath.bootstrapcdn.com/bootstrap/4
                         'https://codepen.io/chriddyp/pen/bWLwgP.css']
 
 external_scripts = [{'src': 'https//cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.4/MathJax.js?config=TeX-MML-AM_CHTML'}]
-app = Dash(__name__, external_stylesheets=external_stylesheets, external_scripts=external_scripts)
+app = Dash(__name__, external_stylesheets=external_stylesheets, external_scripts=external_scripts, update_title=None)
 server = app.server
 server.secret_key = environ.get('SECRET_KEY', 'development')
 
@@ -60,10 +59,8 @@ row_desc = Div(
 row_io = Div(
     [Div(
         [Label(["Insert SMILES: ", dcc.Input(id='smiles', value='', type='text',
-                                            style={"width": "70%"}),
-
+                                             style={"width": "70%"}),
                 Button(id='submit-smiles', type='submit', children='Submit'),
-
                 ], style={"width": "100%"}),
          Label(["Search type: ", dbc.RadioItems(
              id="radio",
@@ -71,7 +68,7 @@ row_io = Div(
              labelClassName="button",
              inline=True,
              options=[
-                {'label': 'Exact ', 'value': 'find_structure'},
+                 {'label': 'Exact ', 'value': 'find_structure'},
                  {'label': 'Substructure ', 'value': 'find_substructures'},
                  {'label': 'Similarity ', 'value': 'find_similar'}
              ],
@@ -82,6 +79,11 @@ row_io = Div(
          DashMarvinJS(id='editor', marvin_url=app.get_asset_url('mjs/editor.html'),
                       marvin_width='100%'),
          ], className='col-md-5'),
+        dcc.Loading(
+            id="loading",
+            children=[html.Div([html.Div(id="loading-output")])],
+            type="dot", style={'font-size': '50px'}
+        ),
         Div([
             html.Div(html.H3("Search results"), style={'textAlign': 'center'}),
             html.Div(id=f'results')], className='col-md-7')],
@@ -129,7 +131,7 @@ def standardize(value, s_click, smi):
         return value
 
 
-@app.callback([Output('results', 'children'), Output('smiles', 'value'),
+@app.callback([Output('results', 'children'), Output('smiles', 'value'), Output("loading-output", "children"),
                ],
               [Input('editor', 'upload')],
               [State('editor', 'upload'), State('smiles', 'value'), State('radio', 'value')])
@@ -147,7 +149,7 @@ def predict(n_clicks, structure_mrv, structure_smi, radio):
             style_header={
                 'whiteSpace': 'normal',
                 'height': 'auto',
-            }), ''
+            }), '', ''
 
     elif structure_mrv:
         with BytesIO(structure_mrv.encode()) as f, MRVRead(f) as i:
@@ -158,10 +160,10 @@ def predict(n_clicks, structure_mrv, structure_smi, radio):
         try:
             df = prediction(structure, radio)
             if df is None:
-                return dbc.Alert("No structures found :(", color="secondary"), ''
-        except Exception as e:
+                return dbc.Alert("No structures found :(", color="secondary"), '', ''
+        except:
             print(format_exc())
-            return dbc.Alert('Something went wrong. Please, check the query and try again', color='danger'), ''
+            return dbc.Alert('Something went wrong. Please, check the query and try again', color='danger'), '', ''
 
         return html.Div(
             [
@@ -189,7 +191,8 @@ def predict(n_clicks, structure_mrv, structure_smi, radio):
                     },
                 )
             ],
-        ), ''
+        ), '', ''
+
 
 
 def structure_to_html(structure):
