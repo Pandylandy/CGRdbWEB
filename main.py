@@ -16,6 +16,7 @@ from traceback import format_exc
 
 import base64
 import dash_bootstrap_components as dbc
+import json
 import pandas
 
 external_stylesheets = [{'href': 'https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css',
@@ -86,7 +87,23 @@ row_io = Div(
         ),
         Div([
             Div(H3("Search results"), style={'textAlign': 'center'}),
-            Div(id=f'results')], className='col-md-7')],
+            Div(id=f'results', style={'display': 'none'}),
+            Div(id=f'none-result'),
+
+            Div(children=[dash_table.DataTable(id='data-results', page_current=0,
+                                               page_size=5,
+                                               page_action='custom', columns=columns,
+                                               markdown_options={"html": True},
+                                               fill_width=True,
+                                               style_data={
+                                                   'whiteSpace': 'normal',
+                                                   'height': 'auto',
+                                               },
+                                               style_header={
+                                                   'whiteSpace': 'normal',
+                                                   'height': 'auto',
+                                               })])], className='col-md-7')],
+
     className='row col-md-12')
 
 error_dialog = dcc.ConfirmDialog(
@@ -132,14 +149,14 @@ def standardize(value, s_click, smi):
         return value, False
 
 
-@app.callback([Output('results', 'children'), Output('smiles', 'value'), Output("loading-output", "children"),
-               ],
+@app.callback([Output('smiles', 'value'), Output("loading-output", "children"),
+               Output('results', 'children'), Output('none-result', 'children')],
               [Input('editor', 'upload')],
               [State('editor', 'upload'), State('smiles', 'value'), State('radio', 'value')])
 def predict(n_clicks, structure_mrv, structure_smi, radio):
     structure = None
     if not n_clicks:
-        return formatted([]), '', ''
+        return '', '', '', ''
 
     elif structure_mrv and n_clicks:
         with BytesIO(structure_mrv.encode()) as f, MRVRead(f) as i:
@@ -150,20 +167,38 @@ def predict(n_clicks, structure_mrv, structure_smi, radio):
         try:
             df = search(structure, radio)
             if df is None:
-                return dbc.Alert("No structures found :(", color="secondary"), '', ''
+                return '', '', '', dbc.Alert("No structures found :(", color="secondary")
         except:
             print(format_exc())
-            return dbc.Alert('Something went wrong. Please, check the query and try again', color='danger'), '', ''
+            return '', '', '', dbc.Alert('Something went wrong. Please, check the query and try again', color='danger')
 
-        return formatted(df), '', ''
+        return '', '', json.dumps(df.to_json(orient="records")), ''
+
+
+@app.callback(
+    Output('data-results', 'data'),
+    Output('data-results', 'page_count'),
+    Output('data-results', 'style_table'),
+    Input('data-results', "page_current"),
+    Input('data-results', "page_size"),
+    Input('results', 'children'))
+def update_table(page_current, page_size, data):
+    if data:
+        data = json.loads(data)
+        data = pandas.read_json(data, orient="records")
+        print(int(data.shape[0] / page_size) + 1)
+        return data.iloc[
+               page_current * page_size:(page_current + 1) * page_size
+               ].to_dict('records'), int(data.shape[0] / page_size) + 1, {}
+    else:
+        return [], 1, {'display': 'none'}
 
 
 def structure_to_html(structure):
     structure.clean2d()
     svg = structure.depict()
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
-    html = f"<img src='data:image/svg+xml;base64,{b64}' width='350px' height='150px'>"
-    return html
+    return f"<img src='data:image/svg+xml;base64,{b64}' width='300px' height='100px'>"
 
 
 @db_session
@@ -191,6 +226,7 @@ def search(structure, search_type):
             for d in s.metadata:
                 res.append(d.data['text'])
             data.append(res)
+
         df = pandas.DataFrame({
             'ID': [s.id for s in f],
             'Structure': [structure_to_html(s.structure) for s in f],
@@ -215,13 +251,14 @@ def formatted(data):
              }}
     if len(data):
         return dash_table.DataTable(**style,
+                                    id='data-results',
                                     data=data.to_dict('records'),
                                     page_current=0,
                                     page_size=10,
                                     page_action='custom'
                                     )
     else:
-        return dash_table.DataTable(**style)
+        return []
 
 
 if __name__ == '__main__':
